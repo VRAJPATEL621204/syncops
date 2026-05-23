@@ -1,0 +1,202 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Role enum aligned with project specs: Admin, Manager, Employee
+enum Role {
+  admin
+  manager
+  employee
+}
+
+enum IncidentPriority {
+  low
+  medium
+  high
+  critical
+}
+
+enum IncidentStatus {
+  open
+  in_progress
+  resolved
+}
+
+enum RoomType {
+  team
+  incident
+  secure
+}
+
+enum InviteStatus {
+  pending
+  accepted
+  expired
+}
+
+// Organization model - central to multi-tenant architecture
+model Organization {
+  id          String    @id @default(uuid())
+  name        String
+  slug        String    @unique
+  description String?
+  logo        String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  users       User[]
+  teams       Team[]
+  incidents   Incident[]
+  inviteTokens InviteToken[]
+}
+
+model User {
+  id              String    @id @default(uuid())
+  fullName        String
+  email           String    @unique
+  phoneNumber     String?
+  password        String
+  role            Role      @default(employee)
+  profileImage    String?
+  emailVerified   Boolean   @default(false)
+  phoneVerified   Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Organization relation
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Relations
+  createdIncidents  Incident[]    @relation("CreatedIncidents")
+  assignedIncidents Incident[]    @relation("AssignedIncidents")
+  messages          Message[]
+  teamMembers       TeamMember[]
+  otpVerifications  OTPVerification[]
+  sentInvites       InviteToken[] @relation("UserSentInvites")
+}
+
+model Team {
+  id              String    @id @default(uuid())
+  name            String
+  description     String?
+  createdAt       DateTime  @default(now())
+
+  // Organization relation
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  members         TeamMember[]
+  inviteTokens    InviteToken[] // Invites associated with this team
+}
+
+model TeamMember {
+  id        String    @id @default(uuid())
+  joinedAt  DateTime  @default(now())
+
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  teamId    String
+  team      Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, teamId])
+}
+
+model Incident {
+  id              String            @id @default(uuid())
+  title           String
+  description     String?
+  priority        IncidentPriority  @default(medium)
+  status          IncidentStatus    @default(open)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  resolvedAt      DateTime?
+
+  // Organization relation
+  organizationId  String
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdById     String
+  createdBy       User              @relation("CreatedIncidents", fields: [createdById], references: [id])
+
+  assignedToId    String?
+  assignedTo      User?             @relation("AssignedIncidents", fields: [assignedToId], references: [id])
+
+  rooms           Room[]
+}
+
+model Room {
+  id           String      @id @default(uuid())
+  name         String
+  type         RoomType
+  createdAt    DateTime    @default(now())
+
+  incidentId   String?
+  incident     Incident?   @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  messages     Message[]
+}
+
+model Message {
+  id          String      @id @default(uuid())
+  content     String
+  createdAt   DateTime    @default(now())
+
+  roomId      String
+  room        Room        @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  senderId    String
+  sender      User        @relation(fields: [senderId], references: [id], onDelete: Cascade)
+}
+
+// Invite token model for manager/employee onboarding
+model InviteToken {
+  id              String        @id @default(uuid())
+  token           String        @unique
+  email           String
+  role            Role
+  status          InviteStatus  @default(pending)
+  expiresAt       DateTime
+  createdAt       DateTime      @default(now())
+  acceptedAt      DateTime?
+  welcomeMessage  String?       // Optional welcome message for invitee
+
+  // Organization relation
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Team relation (optional - for team-specific invites)
+  teamId          String?
+  team            Team?         @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  // Invited by (admin or manager who created the invite)
+  invitedById     String?
+  invitedBy       User?         @relation("UserSentInvites", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([invitedById])
+  @@index([teamId])
+}
+
+// OTP verification model for phone verification
+model OTPVerification {
+  id          String    @id @default(uuid())
+  phoneNumber String
+  otp         String
+  expiresAt   DateTime
+  verified    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  // User relation
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([phoneNumber, otp])
+  @@index([userId])
+}

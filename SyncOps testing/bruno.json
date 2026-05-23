@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "SyncOps testing",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}
