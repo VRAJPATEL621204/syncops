@@ -24,7 +24,7 @@ export const initializeSocket = (httpServer) => {
         .map(c => c.trim())
         .find(c => c.startsWith('token='));
       const token = cookieToken ? cookieToken.split('=')[1] : null;
-      
+
       if (!token) {
         return next(new Error('Authentication required'));
       }

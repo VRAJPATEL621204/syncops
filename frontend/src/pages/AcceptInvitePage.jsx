@@ -147,7 +147,7 @@ const AcceptInvitePage = () => {
       const { user } = response.data.data;
       const isNewUser = response.data.isNewUser;
       
-      // Cookie set by backend — just store user in context
+      // Cookie set by backend
       login(user);
       setSuccess(true);
       setSuccessMessage(isNewUser 

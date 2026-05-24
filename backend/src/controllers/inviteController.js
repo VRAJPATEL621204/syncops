@@ -525,6 +525,7 @@ const processNewUserInvite = async (req, res, invite, fullName, password, phoneN
     success: true,
     message: "Account created successfully",
     isNewUser: true,
+    token: authToken,
     data: {
       user: result.user,
     },
@@ -575,6 +576,7 @@ const processExistingUserInvite = async (req, res, invite, existingUser) => {
     success: true,
     message: "You've been added to a new team",
     isNewUser: false,
+    token: authToken,
     data: {
       user: {
         id: existingUser.id,

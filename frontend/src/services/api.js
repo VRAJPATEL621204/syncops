@@ -10,8 +10,6 @@ const api = axios.create({
   withCredentials: true, // send HttpOnly cookie on every request
 });
 
-// No request interceptor needed — cookie is sent automatically by the browser
-
 // Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,

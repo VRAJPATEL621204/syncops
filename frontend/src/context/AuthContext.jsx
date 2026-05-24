@@ -41,7 +41,7 @@ export const AuthProvider = ({ children }) => {
     initAuth();
   }, []);
 
-  // Called after OTP verify / invite accept — backend has already set the cookie
+  // Called after OTP verify / invite accept — backend sets the cookie
   const login = (userData) => {
     setUser(userData);
     localStorage.setItem('user', JSON.stringify(userData));
