@@ -4,80 +4,58 @@ import { authAPI } from '@/services/api';
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('token'));
+  // Token lives in the HttpOnly cookie — never touched by JS.
+  // We only keep the user object in state (+ localStorage as a fast-restore cache).
+  const [user, setUser] = useState(() => {
+    try {
+      const stored = localStorage.getItem('user');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const initAuth = async () => {
-      const storedToken = localStorage.getItem('token');
-      const storedUser = localStorage.getItem('user');
-      
-      console.log('[AuthContext] Init started:', { hasToken: !!storedToken, hasUser: !!storedUser });
-      
-      if (storedToken && storedUser) {
-        // Immediately restore auth state from localStorage
-        // This prevents redirect to login during refresh
-        setToken(storedToken);
-        const parsedUser = JSON.parse(storedUser);
-        console.log('[AuthContext] Restored user from localStorage:', { 
-          role: parsedUser?.role, 
-          name: parsedUser?.fullName,
-          orgId: parsedUser?.organizationId 
-        });
-        setUser(parsedUser);
-        
-        // Validate token by fetching profile in background
-        try {
-          console.log('[AuthContext] Validating token with getProfile...');
-          const response = await authAPI.getProfile();
-          const freshUser = response.data.data?.user; // Backend returns { data: { user: {...} } }
-          console.log('[AuthContext] Token valid, got fresh user:', { 
-            role: freshUser?.role, 
-            name: freshUser?.fullName 
-          });
-          if (freshUser) {
-            setUser(freshUser);
-            localStorage.setItem('user', JSON.stringify(freshUser));
-          }
-        } catch (error) {
-          console.log('[AuthContext] Profile fetch error:', error.response?.status, error.message);
-          // Only logout on 401 auth errors
-          if (error.response?.status === 401) {
-            console.log('[Auth] Token expired (401), logging out');
-            // Clear everything on auth failure
-            setUser(null);
-            setToken(null);
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
-          } else {
-            // Network/server errors: keep cached user, stay logged in
-            console.log('[Auth] Profile fetch failed (network error), keeping cached user');
-            // User and token already set from localStorage above
-          }
+      // Always validate with the server — cookie is sent automatically
+      try {
+        const response = await authAPI.getProfile();
+        const freshUser = response.data.data?.user;
+        if (freshUser) {
+          setUser(freshUser);
+          localStorage.setItem('user', JSON.stringify(freshUser));
         }
-      } else {
-        console.log('[AuthContext] No stored auth found');
+      } catch (error) {
+        if (error.response?.status === 401) {
+          // Cookie is missing or expired — clear cached user
+          setUser(null);
+          localStorage.removeItem('user');
+        }
+        // Network errors: keep the cached user so the UI doesn't flash to login
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
-      console.log('[AuthContext] Init complete, loading=false');
     };
 
     initAuth();
   }, []);
 
-  const login = (userData, authToken) => {
+  // Called after OTP verify / invite accept — backend has already set the cookie
+  const login = (userData) => {
     setUser(userData);
-    setToken(authToken);
-    localStorage.setItem('token', authToken);
     localStorage.setItem('user', JSON.stringify(userData));
   };
 
-  const logout = () => {
-    setUser(null);
-    setToken(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+  const logout = async () => {
+    try {
+      await authAPI.logout(); // tells backend to clear the HttpOnly cookie
+    } catch {
+      // ignore network errors on logout
+    } finally {
+      setUser(null);
+      localStorage.removeItem('user');
+    }
   };
 
   const updateUser = (userData) => {
@@ -91,7 +69,6 @@ export const AuthProvider = ({ children }) => {
 
   const value = {
     user,
-    token,
     loading,
     login,
     logout,
@@ -99,7 +76,7 @@ export const AuthProvider = ({ children }) => {
     isAdmin,
     isManager,
     isEmployee,
-    isAuthenticated: !!token,
+    isAuthenticated: !!user,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

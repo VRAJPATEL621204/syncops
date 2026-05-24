@@ -113,10 +113,10 @@ const OTPVerificationPage = () => {
         });
       }
 
-      const { user, token } = response.data.data;
+      const { user } = response.data.data;
       
-      // Store auth data
-      login(user, token);
+      // Cookie set by backend — just store user in context
+      login(user);
       
       setSuccess(true);
       

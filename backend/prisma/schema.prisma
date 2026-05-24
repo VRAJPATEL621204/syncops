@@ -21,15 +21,51 @@ enum IncidentPriority {
 }
 
 enum IncidentStatus {
+  report_pending
+  rejected
   open
   in_progress
   resolved
+  closed
+}
+
+enum IncidentCategory {
+  bug
+  feature_request
+  incident
+  security
+  performance
+  other
+}
+
+enum IncidentLogAction {
+  report_created
+  report_approved
+  report_rejected
+  created
+  status_changed
+  priority_changed
+  team_assigned
+  manager_assigned
+  participants_added
+  resolved
+  closed
+  reopened
+  description_updated
+  title_updated
 }
 
 enum RoomType {
-  team
-  incident
-  secure
+  org      // Organization-wide chat
+  team     // Team-specific chat
+  dm       // Direct message between two users
+  incident // Incident room (future use)
+}
+
+enum MessageType {
+  text
+  image
+  audio
 }
 
 enum InviteStatus {
@@ -53,6 +89,7 @@ model Organization {
   teams       Team[]
   incidents   Incident[]
   inviteTokens InviteToken[]
+  rooms       Room[]
 }
 
 model User {
@@ -73,12 +110,16 @@ model User {
   organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   // Relations
-  createdIncidents  Incident[]    @relation("CreatedIncidents")
-  assignedIncidents Incident[]    @relation("AssignedIncidents")
-  messages          Message[]
-  teamMembers       TeamMember[]
-  otpVerifications  OTPVerification[]
-  sentInvites       InviteToken[] @relation("UserSentInvites")
+  createdIncidents    Incident[]    @relation("CreatedIncidents")
+  managedIncidents    Incident[]    @relation("ManagedIncidents")
+  incidentLogs        IncidentLog[]
+  incidentAttachments IncidentAttachment[]
+  messages            Message[]
+  teamMembers         TeamMember[]
+  otpVerifications    OTPVerification[]
+  sentInvites         InviteToken[] @relation("UserSentInvites")
+  createdRooms        Room[]
+  roomParticipants    RoomParticipant[]
 }
 
 model Team {
@@ -93,6 +134,13 @@ model Team {
 
   members         TeamMember[]
   inviteTokens    InviteToken[] // Invites associated with this team
+  
+  // Incidents
+  sourceIncidents     Incident[] @relation("SourceIncidents")
+  assignedIncidents   Incident[] @relation("AssignedIncidents")
+  
+  // Rooms
+  rooms               Room[]
 }
 
 model TeamMember {
@@ -112,47 +160,132 @@ model Incident {
   id              String            @id @default(uuid())
   title           String
   description     String?
+  category        IncidentCategory  @default(incident)
   priority        IncidentPriority  @default(medium)
   status          IncidentStatus    @default(open)
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   resolvedAt      DateTime?
+  closedAt        DateTime?
 
   // Organization relation
   organizationId  String
   organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  // Reporter
   createdById     String
   createdBy       User              @relation("CreatedIncidents", fields: [createdById], references: [id])
 
-  assignedToId    String?
-  assignedTo      User?             @relation("AssignedIncidents", fields: [assignedToId], references: [id])
+  // Source team (where issue originated)
+  sourceTeamId    String
+  sourceTeam      Team              @relation("SourceIncidents", fields: [sourceTeamId], references: [id])
 
+  // Assigned team (responsible for resolving)
+  assignedTeamId  String?
+  assignedTeam    Team?             @relation("AssignedIncidents", fields: [assignedTeamId], references: [id])
+
+  // Assigned manager
+  assignedManagerId String?
+  assignedManager User?             @relation("ManagedIncidents", fields: [assignedManagerId], references: [id])
+
+  // Relations
+  logs            IncidentLog[]
   rooms           Room[]
+  attachments     IncidentAttachment[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([priority])
+  @@index([sourceTeamId])
+  @@index([assignedTeamId])
+  @@index([assignedManagerId])
+  @@index([createdById])
+}
+
+model IncidentLog {
+  id              String          @id @default(uuid())
+  incidentId      String
+  incident        Incident        @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  actorId         String
+  actor           User            @relation(fields: [actorId], references: [id], onDelete: Cascade)
+
+  action          IncidentLogAction
+  oldValue        String?
+  newValue        String?
+  message         String?
+  createdAt       DateTime        @default(now())
+
+  @@index([incidentId])
+  @@index([actorId])
+  @@index([createdAt])
 }
 
 model Room {
-  id           String      @id @default(uuid())
-  name         String
-  type         RoomType
-  createdAt    DateTime    @default(now())
+  id              String    @id @default(uuid())
+  name            String
+  type            RoomType
+  organizationId  String
+  teamId          String?   // For team rooms
+  incidentId      String?   // For incident rooms (future)
+  createdById     String?
+  isArchived      Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  incidentId   String?
-  incident     Incident?   @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  // Relations
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  team            Team?        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  incident        Incident?    @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  createdBy       User?        @relation(fields: [createdById], references: [id])
 
-  messages     Message[]
+  messages        Message[]
+  participants    RoomParticipant[]
+
+  @@index([organizationId])
+  @@index([teamId])
+  @@index([incidentId])
+  @@index([type])
+}
+
+model RoomParticipant {
+  id          String    @id @default(uuid())
+  roomId      String
+  userId      String
+  joinedAt    DateTime  @default(now())
+  role        String?   // Optional: 'admin', 'member'
+  lastReadAt  DateTime? // Optional: track last read timestamp
+
+  // Relations
+  room        Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+  @@index([userId])
 }
 
 model Message {
   id          String      @id @default(uuid())
-  content     String
-  createdAt   DateTime    @default(now())
-
   roomId      String
-  room        Room        @relation(fields: [roomId], references: [id], onDelete: Cascade)
-
   senderId    String
-  sender      User        @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  content     String      @default("")
+  type        MessageType @default(text)
+  mediaUrl    String?     // URL for image/audio files
+  mimeType    String?     // e.g. "image/png", "audio/webm"
+  duration    Int?        // Audio duration in seconds
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  editedAt    DateTime?
+  isDeleted   Boolean     @default(false)
+
+  // Relations
+  room        Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sender      User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([roomId])
+  @@index([senderId])
+  @@index([createdAt])
 }
 
 // Invite token model for manager/employee onboarding
@@ -182,6 +315,25 @@ model InviteToken {
   @@index([organizationId])
   @@index([invitedById])
   @@index([teamId])
+}
+
+// Evidence images attached to incidents (pending review or active)
+model IncidentAttachment {
+  id            String    @id @default(uuid())
+  incidentId    String
+  incident      Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  uploadedById  String
+  uploadedBy    User      @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  fileUrl       String
+  fileType      String    // e.g. "image/png"
+  fileName      String?
+  fileSize      Int?
+  createdAt     DateTime  @default(now())
+
+  @@index([incidentId])
+  @@index([uploadedById])
 }
 
 // OTP verification model for phone verification

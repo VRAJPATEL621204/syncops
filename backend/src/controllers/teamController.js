@@ -1,4 +1,6 @@
 import prisma from "../config/prisma.js";
+import { createTeamRoom, addUserToTeamRoom, removeUserFromTeamRoom } from "../services/roomService.js";
+import { getIO } from "../config/socket.js";
 
 /**
  * Create a new team (Admin only)
@@ -38,6 +40,9 @@ export const createTeam = async (req, res) => {
         },
       },
     });
+
+    // Create team chat room
+    await createTeamRoom(team.id, organizationId, req.user.userId);
 
     res.status(201).json({
       success: true,
@@ -386,93 +391,197 @@ export const addTeamMember = async (req, res) => {
       });
     }
 
+    // Manager can only add to their own teams
+    if (userRole === "manager") {
+      const isMember = await prisma.teamMember.findUnique({
+        where: { userId_teamId: { userId: req.user.userId, teamId } },
+      });
+      if (!isMember) {
+        return res.status(403).json({ success: false, message: "Managers can only add members to their own teams" });
+      }
+    }
+
     // Add member
     const member = await prisma.teamMember.create({
-      data: {
-        userId,
-        teamId,
-      },
+      data: { userId, teamId },
       include: {
         user: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            role: true,
-            profileImage: true,
-          },
+          select: { id: true, fullName: true, email: true, role: true, profileImage: true, phoneNumber: true },
         },
       },
     });
 
+    // Sync: add user to team chat room
+    await addUserToTeamRoom(userId, teamId);
+
+    // Broadcast membership change to org so sidebars update
+    try {
+      const io = getIO();
+      io.to(`org:${organizationId}`).emit('team:memberAdded', { teamId, userId, user: member.user });
+    } catch (_) {}
+
     res.status(201).json({
       success: true,
       message: "Member added to team successfully",
-      data: {
-        id: member.id,
-        user: member.user,
-        joinedAt: member.joinedAt,
-      },
+      data: { id: member.id, user: member.user, joinedAt: member.joinedAt },
     });
   } catch (error) {
     console.error("Add team member error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to add team member",
-      error: error.message,
-    });
+    res.status(500).json({ success: false, message: "Failed to add team member", error: error.message });
   }
 };
 
 /**
- * Remove member from team (Admin only)
+ * Remove member from team (Admin or manager of that team)
  */
 export const removeTeamMember = async (req, res) => {
   try {
     const { teamId, userId } = req.body;
     const organizationId = req.user.organizationId;
     const userRole = req.user.role;
+    const requesterId = req.user.userId;
 
-    if (userRole !== "admin") {
-      return res.status(403).json({
-        success: false,
-        message: "Only admins can remove team members",
+    if (!['admin', 'manager'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: "Unauthorized to remove team members" });
+    }
+
+    // Manager can only remove from their own teams
+    if (userRole === 'manager') {
+      const isMember = await prisma.teamMember.findUnique({
+        where: { userId_teamId: { userId: requesterId, teamId } },
       });
+      if (!isMember) {
+        return res.status(403).json({ success: false, message: "Managers can only remove members from their own teams" });
+      }
     }
 
     // Verify team belongs to organization
-    const team = await prisma.team.findFirst({
-      where: {
-        id: teamId,
-        organizationId,
-      },
-    });
-
+    const team = await prisma.team.findFirst({ where: { id: teamId, organizationId } });
     if (!team) {
-      return res.status(404).json({
-        success: false,
-        message: "Team not found",
-      });
+      return res.status(404).json({ success: false, message: "Team not found" });
     }
 
-    // Remove member
-    await prisma.teamMember.deleteMany({
-      where: {
-        teamId,
-        userId,
-      },
-    });
+    // Remove TeamMember record
+    await prisma.teamMember.deleteMany({ where: { teamId, userId } });
 
-    res.json({
-      success: true,
-      message: "Member removed from team successfully",
-    });
+    // Sync: remove from team chat room
+    await removeUserFromTeamRoom(userId, teamId);
+
+    // Broadcast so sidebars/UIs update
+    try {
+      const io = getIO();
+      io.to(`org:${organizationId}`).emit('team:memberRemoved', { teamId, userId });
+    } catch (_) {}
+
+    res.json({ success: true, message: "Member removed from team successfully" });
   } catch (error) {
     console.error("Remove team member error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to remove team member",
-      error: error.message,
+    res.status(500).json({ success: false, message: "Failed to remove team member", error: error.message });
+  }
+};
+
+/**
+ * Get all organization members (Admin only)
+ */
+export const getOrgMembers = async (req, res) => {
+  try {
+    const organizationId = req.user.organizationId;
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: "Admin access required" });
+    }
+
+    const users = await prisma.user.findMany({
+      where: { organizationId },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        phoneNumber: true,
+        role: true,
+        profileImage: true,
+        createdAt: true,
+        teamMembers: {
+          select: {
+            joinedAt: true,
+            team: { select: { id: true, name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
     });
+
+    const formatted = users.map(u => ({
+      id: u.id,
+      fullName: u.fullName,
+      email: u.email,
+      phoneNumber: u.phoneNumber,
+      role: u.role,
+      profileImage: u.profileImage,
+      joinedAt: u.createdAt,
+      teams: u.teamMembers.map(tm => ({ id: tm.team.id, name: tm.team.name, joinedAt: tm.joinedAt })),
+    }));
+
+    res.json({ success: true, data: formatted });
+  } catch (error) {
+    console.error('Get org members error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch organization members', error: error.message });
+  }
+};
+
+/**
+ * Remove user from organization entirely (Admin only — full offboarding)
+ */
+export const removeFromOrganization = async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const organizationId = req.user.organizationId;
+    const requesterId = req.user.userId;
+
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: "Only admins can remove organization members" });
+    }
+
+    if (userId === requesterId) {
+      return res.status(400).json({ success: false, message: "Cannot remove yourself from the organization" });
+    }
+
+    // Verify user is in this organization
+    const target = await prisma.user.findFirst({ where: { id: userId, organizationId } });
+    if (!target) {
+      return res.status(404).json({ success: false, message: "User not found in organization" });
+    }
+
+    // Get all teams the user belongs to (for room cleanup)
+    const teamMemberships = await prisma.teamMember.findMany({
+      where: { userId },
+      select: { teamId: true },
+    });
+
+    // Remove from all team rooms
+    for (const { teamId } of teamMemberships) {
+      await removeUserFromTeamRoom(userId, teamId);
+    }
+
+    // Remove from all team memberships
+    await prisma.teamMember.deleteMany({ where: { userId } });
+
+    // Remove from ALL room participant records (org room, team rooms, incident rooms, DMs)
+    await prisma.roomParticipant.deleteMany({ where: { userId } });
+
+    // Soft-offboard: keep user record for historical audit trail (messages, incident logs preserved)
+    // Revoke invites so they can't re-join via old links
+    await prisma.inviteToken.deleteMany({ where: { organizationId, invitedById: userId } });
+    // The user record stays in org but has no team/room memberships — effectively locked out of all content
+
+    // Broadcast to org so all clients update
+    try {
+      const io = getIO();
+      io.to(`org:${organizationId}`).emit('org:memberRemoved', { userId });
+    } catch (_) {}
+
+    res.json({ success: true, message: "User removed from organization successfully" });
+  } catch (error) {
+    console.error('Remove from org error:', error);
+    res.status(500).json({ success: false, message: 'Failed to remove user from organization', error: error.message });
   }
 };

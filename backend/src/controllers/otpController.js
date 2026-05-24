@@ -6,6 +6,7 @@ import {
   markOTPVerified,
 } from "../services/otpService.js";
 import { generateToken } from "../utils/jwt.js";
+import { setAuthCookie } from "../utils/cookieHelper.js";
 import { isDevelopment, getDevOTP } from "../services/notificationService.js";
 
 /**
@@ -168,13 +169,14 @@ export const verifyPhoneOTPForLogin = async (req, res) => {
       return res.status(400).json(result);
     }
 
-    // Generate JWT token
+    // Generate JWT token and set as HttpOnly cookie
     const token = generateToken({
       userId: user.id,
       email: user.email,
       role: user.role,
       organizationId: user.organizationId,
     });
+    setAuthCookie(res, token);
 
     // Remove password from response
     const { password: _, ...userWithoutPassword } = user;
@@ -184,7 +186,6 @@ export const verifyPhoneOTPForLogin = async (req, res) => {
       message: "Login successful",
       data: {
         user: userWithoutPassword,
-        token,
       },
     });
   } catch (error) {
@@ -266,13 +267,14 @@ export const verifySignupOTP = async (req, res) => {
       data: { phoneVerified: true },
     });
 
-    // Generate token
+    // Generate token and set as HttpOnly cookie
     const token = generateToken({
       userId: user.id,
       email: user.email,
       role: user.role,
       organizationId: user.organizationId,
     });
+    setAuthCookie(res, token);
 
     res.status(200).json({
       success: true,
@@ -295,7 +297,6 @@ export const verifySignupOTP = async (req, res) => {
             slug: user.organization.slug,
           },
         },
-        token,
       },
     });
   } catch (error) {

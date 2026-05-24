@@ -1,8 +1,10 @@
 import bcrypt from "bcryptjs";
 import prisma from "../config/prisma.js";
 import { generateToken } from "../utils/jwt.js";
+import { clearAuthCookie } from "../utils/cookieHelper.js";
 import { createPhoneOTP } from "../services/otpService.js";
 import { isDevelopment, getDevOTP } from "../services/notificationService.js";
+import { createOrganizationRoom, addUserToOrgRoom, addUserToTeamRoom } from "../services/roomService.js";
 
 // Step 1: Admin signup - creates organization and admin account, sends phone OTP
 export const adminSignup = async (req, res) => {
@@ -82,6 +84,12 @@ export const adminSignup = async (req, res) => {
 
       return { organization, user };
     });
+
+    // Create organization chat room
+    await createOrganizationRoom(result.organization.id, result.user.id);
+
+    // Add user to org room
+    await addUserToOrgRoom(result.user.id, result.organization.id);
 
     // Send OTP to phone for verification
     await createPhoneOTP(result.user.id, phoneNumber, "signup");
@@ -333,6 +341,54 @@ export const changePassword = async (req, res) => {
       success: false,
       message: "Failed to change password",
       error: isDevelopment() ? error.message : undefined,
+    });
+  }
+};
+
+// Logout - clear auth cookie
+export const logout = (req, res) => {
+  clearAuthCookie(res);
+  res.status(200).json({ success: true, message: "Logged out successfully" });
+};
+
+/**
+ * Search users in organization
+ */
+export const searchUsers = async (req, res) => {
+  try {
+    const { organizationId, userId } = req.user;
+    const { q, limit = 20 } = req.query;
+
+    const users = await prisma.user.findMany({
+      where: {
+        organizationId,
+        id: { not: userId }, // Exclude current user
+        ...(q ? {
+          OR: [
+            { fullName: { contains: q, mode: "insensitive" } },
+            { email: { contains: q, mode: "insensitive" } },
+          ],
+        } : {}),
+      },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        profileImage: true,
+        role: true,
+      },
+      take: parseInt(limit),
+    });
+
+    res.json({
+      success: true,
+      data: { users },
+    });
+  } catch (error) {
+    console.error("[Auth] Search users error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to search users",
     });
   }
 };

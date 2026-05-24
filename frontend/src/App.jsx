@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from '@/context/AuthContext';
+import { SocketProvider } from '@/context/SocketContext';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { Toaster } from '@/components/ui/toaster';
 
@@ -10,6 +11,13 @@ import CreateOrganizationPage from '@/pages/CreateOrganizationPage';
 import OTPVerificationPage from '@/pages/OTPVerificationPage';
 import AcceptInvitePage from '@/pages/AcceptInvitePage';
 import DashboardPage from '@/pages/DashboardPage';
+import IncidentsPage from '@/pages/IncidentsPage';
+import ReviewIncidentPage from '@/pages/ReviewIncidentPage';
+import IncidentDetailPage from '@/pages/IncidentDetailPage';
+import ChatPage from '@/pages/ChatPage';
+import SettingsPage from '@/pages/SettingsPage';
+import TeamPage from '@/pages/TeamPage';
+import OrganizationPage from '@/pages/OrganizationPage';
 
 function App() {
   return (
@@ -29,6 +37,74 @@ function App() {
             element={
               <ProtectedRoute>
                 <DashboardPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/incidents"
+            element={
+              <ProtectedRoute>
+                <IncidentsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/incidents/:id/review"
+            element={
+              <ProtectedRoute>
+                <ReviewIncidentPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/incidents/:id"
+            element={
+              <ProtectedRoute>
+                <IncidentDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/chat"
+            element={
+              <ProtectedRoute>
+                <SocketProvider>
+                  <ChatPage />
+                </SocketProvider>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <SettingsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/chat/:roomId"
+            element={
+              <ProtectedRoute>
+                <SocketProvider>
+                  <ChatPage />
+                </SocketProvider>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/teams"
+            element={
+              <ProtectedRoute>
+                <TeamPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/organization"
+            element={
+              <ProtectedRoute>
+                <OrganizationPage />
               </ProtectedRoute>
             }
           />

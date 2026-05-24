@@ -1,20 +1,25 @@
 import { verifyToken } from "../utils/jwt.js";
 
+const extractToken = (req) => {
+  // 1. HttpOnly cookie (primary)
+  if (req.cookies?.token) return req.cookies.token;
+  // 2. Authorization header fallback (used by invite accept flow)
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) return authHeader.split(" ")[1];
+  return null;
+};
+
 export const authenticate = (req, res, next) => {
   try {
-    // Get token from header
-    const authHeader = req.headers.authorization;
+    const token = extractToken(req);
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    if (!token) {
       return res.status(401).json({
         success: false,
         message: "Access denied. No token provided.",
       });
     }
 
-    const token = authHeader.split(" ")[1];
-
-    // Verify token
     const decoded = verifyToken(token);
 
     if (!decoded) {
@@ -24,9 +29,7 @@ export const authenticate = (req, res, next) => {
       });
     }
 
-    // Attach user info to request
     req.user = decoded;
-
     next();
   } catch (error) {
     console.error("Auth middleware error:", error);
@@ -40,20 +43,13 @@ export const authenticate = (req, res, next) => {
 // Optional auth - doesn't require token but attaches user if present
 export const optionalAuth = (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
-
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      const token = authHeader.split(" ")[1];
+    const token = extractToken(req);
+    if (token) {
       const decoded = verifyToken(token);
-
-      if (decoded) {
-        req.user = decoded;
-      }
+      if (decoded) req.user = decoded;
     }
-
     next();
   } catch (error) {
-    // Continue without auth
     next();
   }
 };

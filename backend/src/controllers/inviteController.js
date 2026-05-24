@@ -3,7 +3,9 @@ import bcrypt from "bcryptjs";
 import prisma from "../config/prisma.js";
 import { sendInviteEmail } from "../services/notificationService.js";
 import { generateToken } from "../utils/jwt.js";
+import { setAuthCookie } from "../utils/cookieHelper.js";
 import { isDevelopment } from "../services/notificationService.js";
+import { addUserToOrgRoom, addUserToTeamRoom } from "../services/roomService.js";
 
 const INVITE_EXPIRY_DAYS = 7;
 
@@ -59,20 +61,38 @@ export const createInvite = async (req, res) => {
       });
     }
 
-    // Check if email already exists in organization
+    // Check if user exists (for multi-team support)
     const existingUser = await prisma.user.findFirst({
       where: {
         email,
-        organizationId,
+      },
+      include: {
+        teamMembers: teamId ? {
+          where: { teamId },
+        } : false,
       },
     });
 
-    if (existingUser) {
-      return res.status(409).json({
+    // CASE 1: User exists in DIFFERENT organization - BLOCK
+    if (existingUser && existingUser.organizationId !== organizationId) {
+      return res.status(403).json({
         success: false,
-        message: "User with this email already exists in your organization",
+        message: "User already belongs to another organization",
+        code: "DIFFERENT_ORG",
       });
     }
+
+    // CASE 2: User already in TARGET team - BLOCK
+    if (existingUser && teamId && existingUser.teamMembers?.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: "User already belongs to this team",
+        code: "ALREADY_IN_TEAM",
+      });
+    }
+
+    // CASE 3: User exists in SAME org but DIFFERENT team - ALLOW (multi-team support)
+    // Continue with invite creation
 
     // Check for existing pending invite
     const existingInvite = await prisma.inviteToken.findFirst({
@@ -266,10 +286,17 @@ export const validateInvite = async (req, res) => {
       });
     }
 
+    // Check if the invited email already has an account
+    const existingUser = await prisma.user.findUnique({
+      where: { email: invite.email },
+      select: { id: true },
+    });
+
     res.status(200).json({
       success: true,
       message: "Invitation is valid",
       data: {
+        userExists: !!existingUser,
         invite: {
           id: invite.id,
           email: invite.email,
@@ -293,17 +320,21 @@ export const validateInvite = async (req, res) => {
 };
 
 /**
- * Accept invitation and create account
+ * Accept invitation and create account or add to team (Multi-team support)
+ * 
+ * CASE 1: New user → Create account + add to team
+ * CASE 2: Existing user in same org → Just add to team
+ * CASE 3: Existing user in diff org → Block (multi-org not supported)
+ * CASE 4: Already in team → Return error
  */
 export const acceptInvite = async (req, res) => {
   try {
     const { token, fullName, password, phoneNumber } = req.body;
 
-    // Validation
-    if (!token || !fullName || !password) {
+    if (!token) {
       return res.status(400).json({
         success: false,
-        message: "Token, full name, and password are required",
+        message: "Token is required",
       });
     }
 
@@ -342,96 +373,56 @@ export const acceptInvite = async (req, res) => {
       });
     }
 
-    // Check if email already exists
+    // Check if user already exists
     const existingUser = await prisma.user.findUnique({
       where: { email: invite.email },
+      include: {
+        teamMembers: {
+          where: { teamId: invite.teamId },
+        },
+      },
     });
 
-    if (existingUser) {
-      return res.status(409).json({
+    // CASE 3: User exists in DIFFERENT organization - BLOCK
+    if (existingUser && existingUser.organizationId !== invite.organizationId) {
+      return res.status(403).json({
         success: false,
-        message: "An account with this email already exists",
+        message: "User already belongs to another organization",
+        code: "DIFFERENT_ORG",
       });
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    // Create user and update invite in transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // Create user
-      const user = await tx.user.create({
-        data: {
-          fullName,
-          email: invite.email,
-          password: hashedPassword,
-          phoneNumber,
-          role: invite.role,
-          organizationId: invite.organizationId,
-          emailVerified: true,
-          phoneVerified: false,
-        },
-        select: {
-          id: true,
-          fullName: true,
-          email: true,
-          phoneNumber: true,
-          role: true,
-          profileImage: true,
-          emailVerified: true,
-          phoneVerified: true,
-          organizationId: true,
-          createdAt: true,
-          organization: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              description: true,
-              logo: true,
-            },
-          },
-        },
+    // CASE 4: User already in this team - BLOCK
+    if (existingUser && existingUser.teamMembers.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: "User already belongs to this team",
+        code: "ALREADY_IN_TEAM",
       });
+    }
 
-      // Add user to team if invite had teamId
-      if (invite.teamId) {
-        await tx.teamMember.create({
-          data: {
-            userId: user.id,
-            teamId: invite.teamId,
-          },
+    // CASE 2: Existing user in SAME organization - Verify password then add to team
+    if (existingUser && existingUser.organizationId === invite.organizationId) {
+      if (!password) {
+        return res.status(400).json({
+          success: false,
+          message: "Password is required to join the team",
+          code: "NEW_USER_REQUIRED_FIELDS",
         });
       }
+      const passwordMatch = await bcrypt.compare(password, existingUser.password);
+      if (!passwordMatch) {
+        return res.status(401).json({
+          success: false,
+          message: "Incorrect password. Please try again.",
+          code: "INVALID_PASSWORD",
+        });
+      }
+      return await processExistingUserInvite(req, res, invite, existingUser);
+    }
 
-      // Update invite status
-      await tx.inviteToken.update({
-        where: { id: invite.id },
-        data: {
-          status: "accepted",
-          acceptedAt: new Date(),
-        },
-      });
-
-      return { user };
-    });
-
-    // Generate token
-    const authToken = generateToken({
-      userId: result.user.id,
-      email: result.user.email,
-      role: result.user.role,
-      organizationId: result.user.organizationId,
-    });
-
-    res.status(201).json({
-      success: true,
-      message: "Account created successfully",
-      data: {
-        user: result.user,
-        token: authToken,
-      },
-    });
+      // CASE 1: New user - Create account + add to team
+    return await processNewUserInvite(req, res, invite, fullName, password, phoneNumber);
   } catch (error) {
     console.error("Accept invite error:", error);
     res.status(500).json({
@@ -440,6 +431,160 @@ export const acceptInvite = async (req, res) => {
       error: isDevelopment() ? error.message : undefined,
     });
   }
+};
+
+/**
+ * Process invite for NEW user (create account)
+ */
+const processNewUserInvite = async (req, res, invite, fullName, password, phoneNumber) => {
+  // Validate required fields for new user
+  if (!fullName || !password) {
+    return res.status(400).json({
+      success: false,
+      message: "Full name and password are required for new users",
+      code: "NEW_USER_REQUIRED_FIELDS",
+    });
+  }
+
+  const hashedPassword = await bcrypt.hash(password, 12);
+
+  // Create user and add to team in transaction
+  const result = await prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({
+      data: {
+        fullName,
+        email: invite.email,
+        password: hashedPassword,
+        phoneNumber: phoneNumber || null,
+        role: invite.role,
+        organizationId: invite.organizationId,
+        emailVerified: true,
+        phoneVerified: false,
+      },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        phoneNumber: true,
+        role: true,
+        profileImage: true,
+        emailVerified: true,
+        phoneVerified: true,
+        organizationId: true,
+        createdAt: true,
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            description: true,
+            logo: true,
+          },
+        },
+      },
+    });
+
+    // Add user to team
+    if (invite.teamId) {
+      await tx.teamMember.create({
+        data: {
+          userId: user.id,
+          teamId: invite.teamId,
+        },
+      });
+    }
+
+    // Update invite status
+    await tx.inviteToken.update({
+      where: { id: invite.id },
+      data: {
+        status: "accepted",
+        acceptedAt: new Date(),
+      },
+    });
+
+    return { user };
+  });
+
+  // Add to rooms (outside transaction)
+  await addUserToOrgRoom(result.user.id, result.user.organizationId);
+  if (invite.teamId) {
+    await addUserToTeamRoom(result.user.id, invite.teamId);
+  }
+
+  // Generate auth token and set as HttpOnly cookie
+  const authToken = generateToken({
+    userId: result.user.id,
+    email: result.user.email,
+    role: result.user.role,
+    organizationId: result.user.organizationId,
+  });
+  setAuthCookie(res, authToken);
+
+  res.status(201).json({
+    success: true,
+    message: "Account created successfully",
+    isNewUser: true,
+    data: {
+      user: result.user,
+    },
+  });
+};
+
+/**
+ * Process invite for EXISTING user (add to new team)
+ */
+const processExistingUserInvite = async (req, res, invite, existingUser) => {
+  // Add user to team in transaction
+  await prisma.$transaction(async (tx) => {
+    // Add to team
+    if (invite.teamId) {
+      await tx.teamMember.create({
+        data: {
+          userId: existingUser.id,
+          teamId: invite.teamId,
+        },
+      });
+    }
+
+    // Update invite status
+    await tx.inviteToken.update({
+      where: { id: invite.id },
+      data: {
+        status: "accepted",
+        acceptedAt: new Date(),
+      },
+    });
+  });
+
+  // Add to team room (outside transaction)
+  if (invite.teamId) {
+    await addUserToTeamRoom(existingUser.id, invite.teamId);
+  }
+
+  // Generate fresh auth token and set as HttpOnly cookie
+  const authToken = generateToken({
+    userId: existingUser.id,
+    email: existingUser.email,
+    role: existingUser.role,
+    organizationId: existingUser.organizationId,
+  });
+  setAuthCookie(res, authToken);
+
+  res.status(200).json({
+    success: true,
+    message: "You've been added to a new team",
+    isNewUser: false,
+    data: {
+      user: {
+        id: existingUser.id,
+        fullName: existingUser.fullName,
+        email: existingUser.email,
+        role: existingUser.role,
+        organizationId: existingUser.organizationId,
+      },
+    },
+  });
 };
 
 /**
