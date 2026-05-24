@@ -128,7 +128,7 @@ export const sendEmail = async (email, otp, purpose = "verification", extraData 
  * @returns {Promise<boolean>} - Success status
  */
 export const sendInviteEmail = async (email, inviteToken, inviterName, organizationName, role, teamName = null, welcomeMessage = null) => {
-  const inviteUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/accept-invite?token=${inviteToken}`;
+  const inviteUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/#/accept-invite?token=${inviteToken}`;
   
   // Always log for debugging
   console.log(`[EMAIL INVITE] To: ${email}`);
