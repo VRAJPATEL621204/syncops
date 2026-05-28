@@ -50,8 +50,13 @@ const MainLayout = ({ children }) => {
             {/* Logo */}
             <button
               onClick={() => {
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-                navigate('/');
+                if (location.pathname !== '/') {
+                  navigate('/');
+                }
+                // Always scroll to top, even if already on home page
+                setTimeout(() => {
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }, 0);
               }}
               className="flex items-center gap-2.5 group cursor-pointer bg-transparent border-none p-0"
             >
