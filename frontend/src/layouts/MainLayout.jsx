@@ -8,6 +8,15 @@ const MainLayout = ({ children }) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const location = useLocation();
 
+  // Smooth scroll to section (works with HashRouter)
+  const scrollToSection = (id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth' });
+    }
+    setIsMenuOpen(false);
+  };
+
   useEffect(() => {
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 10);
@@ -22,9 +31,9 @@ const MainLayout = ({ children }) => {
   }, [location]);
 
   const navLinks = [
-    { label: 'Features', href: '#features' },
-    { label: 'Security', href: '#security' },
-    { label: 'Roles', href: '#roles' },
+    { label: 'Features', id: 'features' },
+    { label: 'Security', id: 'security' },
+    { label: 'Roles', id: 'roles' },
   ];
 
   return (
@@ -46,13 +55,13 @@ const MainLayout = ({ children }) => {
             {/* Desktop Nav */}
             <div className="hidden md:flex items-center gap-1">
               {navLinks.map((link) => (
-                <a
+                <button
                   key={link.label}
-                  href={link.href}
-                  className="px-4 py-2 text-sm text-[hsl(215,20%,55%)] hover:text-[hsl(210,40%,98%)] rounded-lg hover:bg-[hsl(217,33%,12%)]/50 transition-all duration-200"
+                  onClick={() => scrollToSection(link.id)}
+                  className="px-4 py-2 text-sm text-[hsl(215,20%,55%)] hover:text-[hsl(210,40%,98%)] rounded-lg hover:bg-[hsl(217,33%,12%)]/50 transition-all duration-200 cursor-pointer"
                 >
                   {link.label}
-                </a>
+                </button>
               ))}
             </div>
 
@@ -90,14 +99,13 @@ const MainLayout = ({ children }) => {
         }`}>
           <div className="px-4 py-4 space-y-1">
             {navLinks.map((link) => (
-              <a
+              <button
                 key={link.label}
-                href={link.href}
-                className="block px-3 py-2.5 text-sm text-[hsl(215,20%,55%)] hover:text-[hsl(210,40%,98%)] hover:bg-[hsl(217,33%,12%)]/50 rounded-lg transition-colors"
-                onClick={() => setIsMenuOpen(false)}
+                onClick={() => scrollToSection(link.id)}
+                className="block w-full text-left px-3 py-2.5 text-sm text-[hsl(215,20%,55%)] hover:text-[hsl(210,40%,98%)] hover:bg-[hsl(217,33%,12%)]/50 rounded-lg transition-colors cursor-pointer"
               >
                 {link.label}
-              </a>
+              </button>
             ))}
             <div className="pt-3 mt-3 border-t border-[hsl(217,33%,12%)] space-y-2">
               <Link to="/login" onClick={() => setIsMenuOpen(false)}>
