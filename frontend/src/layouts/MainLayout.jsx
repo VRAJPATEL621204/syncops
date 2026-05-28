@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Shield, Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -7,6 +7,7 @@ const MainLayout = ({ children }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
 
   // Smooth scroll to section (works with HashRouter)
   const scrollToSection = (id) => {
@@ -50,9 +51,7 @@ const MainLayout = ({ children }) => {
             <button
               onClick={() => {
                 window.scrollTo({ top: 0, behavior: 'smooth' });
-                if (location.pathname !== '/') {
-                  window.location.hash = '#/'; // Force navigation to root
-                }
+                navigate('/');
               }}
               className="flex items-center gap-2.5 group cursor-pointer bg-transparent border-none p-0"
             >
