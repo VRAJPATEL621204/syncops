@@ -47,14 +47,18 @@ const MainLayout = ({ children }) => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             {/* Logo */}
-            <Link
-              to="/"
-              className="flex items-center gap-2.5 group"
-              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            <button
+              onClick={() => {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                if (location.pathname !== '/') {
+                  window.location.hash = '#/'; // Force navigation to root
+                }
+              }}
+              className="flex items-center gap-2.5 group cursor-pointer bg-transparent border-none p-0"
             >
               <img src="/logo.png" alt="SyncOps" className="w-8 h-8 rounded-lg object-contain" />
               <span className="text-xl font-semibold text-[hsl(210,40%,98%)] tracking-tight">SyncOps</span>
-            </Link>
+            </button>
 
             {/* Desktop Nav */}
             <div className="hidden md:flex items-center gap-1">
